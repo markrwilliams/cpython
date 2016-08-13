@@ -9,6 +9,7 @@ from test import support
 from time import sleep
 import unittest
 import unittest.mock
+import tempfile
 from time import monotonic as time
 try:
     import resource
@@ -475,12 +476,36 @@ class EpollSelectorTestCase(BaseSelectorTestCase, ScalableSelectorMixIn):
 
     SELECTOR = getattr(selectors, 'EpollSelector', None)
 
+    def test_register_file(self):
+        # epoll(7) returns EPERM when given a file to watch
+        s = self.SELECTOR()
+        with tempfile.NamedTemporaryFile() as f:
+            with self.assertRaises(IOError):
+                s.register(f, selectors.EVENT_READ)
+            # the SelectorKey has been removed
+            with self.assertRaises(KeyError):
+                s.get_key(f)
+
 
 @unittest.skipUnless(hasattr(selectors, 'KqueueSelector'),
                      "Test needs selectors.KqueueSelector)")
 class KqueueSelectorTestCase(BaseSelectorTestCase, ScalableSelectorMixIn):
 
     SELECTOR = getattr(selectors, 'KqueueSelector', None)
+
+    def test_register_bad_fd(self):
+        # a file descriptor that's been closed should raise an OSError
+        # with EBADF
+        s = self.SELECTOR()
+        pipe_read, pipe_write = os.pipe()
+        os.close(pipe_read)
+        os.close(pipe_write)
+        with self.assertRaises(OSError) as cm:
+            s.register(pipe_read, selectors.EVENT_READ)
+        self.assertEqual(cm.exception.errno, errno.EBADF)
+        # the SelectorKey has been removed
+        with self.assertRaises(KeyError):
+            s.get_key(pipe_read)
 
 
 @unittest.skipUnless(hasattr(selectors, 'DevpollSelector'),
